@@ -848,10 +848,145 @@ const MODULES = [
   { id: "txlog", label: "TX Log", icon: "🔍", component: TXLog },
 ];
 
+// ── Wallet Connection Hook ────────────────────────────────────────────────────
+function useWallet() {
+  const [wallet, setWallet] = useState(null); // { address, balance, provider }
+  const [connecting, setConnecting] = useState(false);
+  const [error, setError] = useState(null);
+
+  const detectProvider = () => {
+    // Check for Unisat (most common Bitcoin wallet)
+    if (window.unisat) return { name: "Unisat", obj: window.unisat, type: "unisat" };
+    // Check for Xverse
+    if (window.BitcoinProvider) return { name: "Xverse", obj: window.BitcoinProvider, type: "xverse" };
+    // Check for OKX Wallet
+    if (window.okxwallet?.bitcoin) return { name: "OKX", obj: window.okxwallet.bitcoin, type: "okx" };
+    // Check for Leather/Hiro
+    if (window.LeatherProvider) return { name: "Leather", obj: window.LeatherProvider, type: "leather" };
+    return null;
+  };
+
+  const connect = async () => {
+    setConnecting(true);
+    setError(null);
+    try {
+      const provider = detectProvider();
+      if (!provider) {
+        setError("no_wallet");
+        setConnecting(false);
+        return;
+      }
+      let address = null;
+      let balance = null;
+
+      if (provider.type === "unisat") {
+        const accounts = await provider.obj.requestAccounts();
+        address = accounts[0];
+        const bal = await provider.obj.getBalance();
+        balance = (bal.confirmed / 1e8).toFixed(6) + " BTC";
+      } else if (provider.type === "okx") {
+        const result = await provider.obj.requestAccounts();
+        address = result[0];
+        balance = "— BTC";
+      } else {
+        // Generic fallback
+        const accounts = await provider.obj.requestAccounts?.();
+        address = accounts?.[0] || "bc1q…unknown";
+        balance = "— BTC";
+      }
+
+      setWallet({ address, balance, providerName: provider.name });
+    } catch (e) {
+      setError(e.message || "Connection rejected");
+    }
+    setConnecting(false);
+  };
+
+  const disconnect = () => setWallet(null);
+
+  return { wallet, connecting, error, connect, disconnect };
+}
+
+// ── Wallet Modal ──────────────────────────────────────────────────────────────
+function WalletModal({ onClose, onConnect, connecting, error }) {
+  const wallets = [
+    { name: "Unisat", icon: "🟠", desc: "Most popular Bitcoin wallet", url: "https://unisat.io" },
+    { name: "Xverse", icon: "🔵", desc: "Bitcoin & Ordinals wallet", url: "https://www.xverse.app" },
+    { name: "OKX Wallet", icon: "⚫", desc: "Multi-chain Web3 wallet", url: "https://www.okx.com/web3" },
+    { name: "Leather", icon: "🟤", desc: "Bitcoin & Stacks wallet", url: "https://leather.io" },
+  ];
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "#000000cc", zIndex: 999,
+      display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
+      onClick={onClose}>
+      <div onClick={e => e.stopPropagation()}
+        style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16,
+          padding: 28, width: "100%", maxWidth: 420,
+          boxShadow: `0 0 60px ${C.accent}22, 0 20px 60px #00000080` }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+          <h3 style={{ color: C.textPrimary, fontFamily: "'Orbitron', monospace", fontSize: 16, margin: 0 }}>
+            Connect Wallet
+          </h3>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: C.textDim,
+            cursor: "pointer", fontSize: 20, lineHeight: 1 }}>✕</button>
+        </div>
+
+        {error === "no_wallet" && (
+          <div style={{ background: `${C.orange}15`, border: `1px solid ${C.orange}44`,
+            borderRadius: 10, padding: "12px 16px", marginBottom: 16 }}>
+            <p style={{ color: C.orange, fontSize: 13, margin: 0 }}>
+              ⚠️ No Bitcoin wallet detected. Please install one of the wallets below.
+            </p>
+          </div>
+        )}
+        {error && error !== "no_wallet" && (
+          <div style={{ background: `${C.red}15`, border: `1px solid ${C.red}44`,
+            borderRadius: 10, padding: "12px 16px", marginBottom: 16 }}>
+            <p style={{ color: C.red, fontSize: 13, margin: 0 }}>❌ {error}</p>
+          </div>
+        )}
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 20 }}>
+          {wallets.map(w => (
+            <button key={w.name} onClick={onConnect}
+              style={{ display: "flex", alignItems: "center", gap: 14, padding: "14px 16px",
+                background: C.bg, border: `1px solid ${C.border}`, borderRadius: 10,
+                cursor: connecting ? "not-allowed" : "pointer", transition: "all .2s",
+                textAlign: "left", width: "100%", fontFamily: "inherit",
+                opacity: connecting ? 0.6 : 1 }}
+              onMouseEnter={e => { e.currentTarget.style.borderColor = C.accent; e.currentTarget.style.background = C.surfaceHi; }}
+              onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.background = C.bg; }}>
+              <span style={{ fontSize: 28 }}>{w.icon}</span>
+              <div style={{ flex: 1 }}>
+                <div style={{ color: C.textPrimary, fontWeight: 700, fontSize: 14 }}>{w.name}</div>
+                <div style={{ color: C.textSecondary, fontSize: 12 }}>{w.desc}</div>
+              </div>
+              {connecting ? (
+                <span style={{ color: C.accent, fontSize: 12 }}>Connecting…</span>
+              ) : (
+                <span style={{ color: C.textDim, fontSize: 18 }}>→</span>
+              )}
+            </button>
+          ))}
+        </div>
+
+        <p style={{ color: C.textDim, fontSize: 11, textAlign: "center", margin: 0 }}>
+          Don't have a wallet?{" "}
+          <a href="https://unisat.io" target="_blank" rel="noreferrer"
+            style={{ color: C.accent, textDecoration: "none" }}>Install Unisat ↗</a>
+        </p>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [activeModule, setActiveModule] = useState("deploy");
   const [tick, setTick] = useState(0);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [showWalletModal, setShowWalletModal] = useState(false);
+  const { wallet, connecting, error, connect, disconnect } = useWallet();
 
   // live ticker simulation
   useEffect(() => {
@@ -932,13 +1067,41 @@ export default function App() {
           {/* Wallet */}
           <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <PulsingDot color={C.green} />
+              <PulsingDot color={wallet ? C.green : C.orange} />
               <span style={{ color: C.textSecondary, fontSize: 12 }}>OP_NET</span>
             </div>
-            <Btn variant="secondary" size="sm">🔗 Connect Wallet</Btn>
+            {wallet ? (
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <div style={{ background: C.surfaceHi, border: `1px solid ${C.border}`,
+                  borderRadius: 8, padding: "6px 12px", display: "flex", gap: 8, alignItems: "center" }}>
+                  <span style={{ fontSize: 10 }}>🟢</span>
+                  <div>
+                    <div style={{ color: C.textPrimary, fontSize: 11, fontFamily: "monospace", fontWeight: 700 }}>
+                      {shortAddr(wallet.address)}
+                    </div>
+                    <div style={{ color: C.accent, fontSize: 10 }}>{wallet.balance}</div>
+                  </div>
+                </div>
+                <Btn variant="danger" size="sm" onClick={disconnect}>Disconnect</Btn>
+              </div>
+            ) : (
+              <Btn variant="secondary" size="sm" onClick={() => setShowWalletModal(true)}>
+                {connecting ? "⏳ Connecting…" : "🔗 Connect Wallet"}
+              </Btn>
+            )}
           </div>
         </div>
       </div>
+
+      {/* Wallet Modal */}
+      {showWalletModal && (
+        <WalletModal
+          onClose={() => setShowWalletModal(false)}
+          onConnect={async () => { await connect(); if (!error) setShowWalletModal(false); }}
+          connecting={connecting}
+          error={error}
+        />
+      )}
 
       {/* Layout */}
       <div style={{ display: "flex", paddingTop: 60, minHeight: "100vh", position: "relative", zIndex: 1 }}>
